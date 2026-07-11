@@ -178,6 +178,11 @@
       const [manualPlacementTarget, setManualPlacementTarget] = useState(null);
       const [selectedPlacementSlot, setSelectedPlacementSlot] = useState(null);
 
+      // 階段四：手動預排指定時段課程狀態
+      const [preScheduleSearch, setPreScheduleSearch] = useState('');
+      const [previewClassGrade, setPreviewClassGrade] = useState('');
+      const [previewClassClassName, setPreviewClassClassName] = useState('');
+
       // ================= 2. 記憶化計算宣告 (useMemo) =================
       // 將 memory 屬性移到頂部，徹底消除 TDZ (Temporal Dead Zone) 造成 pendingCourses / filteredTeachersForDrag 未宣告錯誤
       
@@ -309,6 +314,32 @@
         setSelectedPlacementSlot(null);
       }, [manualPlacementTarget]);
 
+      useEffect(() => {
+        if (grades.length > 0 && !previewClassGrade) {
+          setPreviewClassGrade(grades[0].name);
+          if (grades[0].classes.length > 0) {
+            setPreviewClassClassName(grades[0].classes[0]);
+          }
+        }
+      }, [grades]);
+
+      useEffect(() => {
+        if (previewClassGrade) {
+          const g = grades.find(x => x.name === previewClassGrade);
+          if (g && g.classes.length > 0) {
+            setPreviewClassClassName(g.classes[0]);
+          } else {
+            setPreviewClassClassName('');
+          }
+        }
+      }, [previewClassGrade, grades]);
+
+      useEffect(() => {
+        if (activeTab === 4 && !schedule) {
+          initEmptySchedule();
+        }
+      }, [activeTab]);
+
       const unplacedLessons = useMemo(() => {
         if (!schedule) return [];
         
@@ -349,6 +380,38 @@
         
         return unplaced;
       }, [assignments, schedule, timeConfig]);
+
+      const getPreScheduledCount = (assign) => {
+        if (!schedule) return 0;
+        let count = 0;
+        const classSchedule = schedule[assign.grade]?.[assign.className];
+        if (!classSchedule) return 0;
+        for (let d = 0; d < timeConfig.days; d++) {
+          for (let p = 0; p < timeConfig.periodsPerDay; p++) {
+            const cell = classSchedule[d]?.[p];
+            if (cell && cell.subject === assign.subject && cell.teacher === assign.teacher && cell.preScheduled) {
+              count++;
+            }
+          }
+        }
+        return count;
+      };
+
+      const filteredPreScheduleAssignments = useMemo(() => {
+        return assignments.filter(assign => {
+          const preScheduledCount = getPreScheduledCount(assign);
+          const remainingHours = assign.hours - preScheduledCount;
+          if (remainingHours <= 0) return false;
+          
+          const searchLower = preScheduleSearch.toLowerCase().trim();
+          if (!searchLower) return true;
+          
+          return assign.grade.toLowerCase().includes(searchLower) ||
+                 assign.className.toLowerCase().includes(searchLower) ||
+                 assign.subject.toLowerCase().includes(searchLower) ||
+                 assign.teacher.toLowerCase().includes(searchLower);
+        });
+      }, [assignments, schedule, preScheduleSearch]);
 
       useEffect(() => {
         if (!schedule) return;
@@ -391,6 +454,19 @@
 
       // ================= 5. 事件與工具函式 (Helpers) =================
       const showToast = (message, type = 'success') => setToast({ message, type });
+
+      const initEmptySchedule = (force = false) => {
+        if (!force && schedule) return; 
+        const newSchedule = {};
+        grades.forEach(g => {
+          newSchedule[g.name] = {};
+          g.classes.forEach(c => {
+            newSchedule[g.name][c] = Array(timeConfig.days).fill(null).map(() => Array(timeConfig.periodsPerDay).fill(null));
+          });
+        });
+        setSchedule(newSchedule);
+        setScheduleStats({ total: 0, placed: 0, conflicts: 0 });
+      };
 
       const getTeacherLabel = (teacherName) => {
         const hr = homerooms[teacherName];
@@ -1341,20 +1417,50 @@ ${classSamples}
         }
 
         setIsScheduling(true);
-        setSchedule(null);
+        const existingSchedule = schedule;
         setTimeout(() => {
           const newSchedule = {};
           grades.forEach(g => {
             newSchedule[g.name] = {};
             g.classes.forEach(c => {
               newSchedule[g.name][c] = Array(timeConfig.days).fill(null).map(() => Array(timeConfig.periodsPerDay).fill(null));
+              if (existingSchedule && existingSchedule[g.name] && existingSchedule[g.name][c]) {
+                for (let d = 0; d < timeConfig.days; d++) {
+                  for (let p = 0; p < timeConfig.periodsPerDay; p++) {
+                    const cell = existingSchedule[g.name][c][d]?.[p];
+                    if (cell && cell.preScheduled) {
+                      newSchedule[g.name][c][d][p] = cell;
+                    }
+                  }
+                }
+              }
             });
           });
           let totalLessons = 0, placedLessons = 0, conflicts = 0;
           let lessonsToSchedule = [];
           
+          const preScheduledCounts = {};
+          for (const gName in newSchedule) {
+            for (const cName in newSchedule[gName]) {
+              for (let d = 0; d < timeConfig.days; d++) {
+                for (let p = 0; p < timeConfig.periodsPerDay; p++) {
+                  const cell = newSchedule[gName][cName][d][p];
+                  if (cell && cell.preScheduled) {
+                    const key = `${gName}-${cName}-${cell.subject}-${cell.teacher}`;
+                    preScheduledCounts[key] = (preScheduledCounts[key] || 0) + 1;
+                    placedLessons++;
+                    totalLessons++;
+                  }
+                }
+              }
+            }
+          }
+
           assignments.forEach(assign => {
-            for (let i = 0; i < assign.hours; i++) {
+            const key = `${assign.grade}-${assign.className}-${assign.subject}-${assign.teacher}`;
+            const prePlaced = preScheduledCounts[key] || 0;
+            const remaining = Math.max(0, assign.hours - prePlaced);
+            for (let i = 0; i < remaining; i++) {
               lessonsToSchedule.push({ ...assign });
               totalLessons++;
             }
@@ -1496,7 +1602,11 @@ ${classSamples}
           return;
         }
 
-        nextSchedule[grade][className][day][period] = { subject, teacher };
+        nextSchedule[grade][className][day][period] = { 
+          subject, 
+          teacher, 
+          preScheduled: activeTab === 4 || (existing && existing.preScheduled) 
+        };
         setSchedule(nextSchedule);
         setSelectedPlacementSlot(null);
         showToast(`已成功將 ${subject} 排入 ${grade} ${className} 的星期${['一','二','三','四','五','六'][day]} 第 ${period + 1} 節！`);
@@ -1579,7 +1689,8 @@ ${classSamples}
 
           nextSchedule[grade][className][day][period] = {
             subject: assign.subject,
-            teacher: assign.teacher
+            teacher: assign.teacher,
+            preScheduled: activeTab === 4 || (cellBefore && cellBefore.preScheduled)
           };
         } else if (type === 'teacher') {
           // 檢查手動排入的節數是否已滿
@@ -1601,7 +1712,8 @@ ${classSamples}
 
           nextSchedule[assign.grade][assign.className][day][period] = {
             subject: assign.subject,
-            teacher: teacher
+            teacher: teacher,
+            preScheduled: activeTab === 4 || (cellBefore && cellBefore.preScheduled)
           };
         }
 
@@ -1664,7 +1776,8 @@ ${teacherRule}
               <TabButton step={1} icon={(props) => <Icon name="Settings" {...props} />} label="1. 年級與班級設定" />
               <TabButton step={2} icon={(props) => <Icon name="Clock" {...props} />} label="2. 時間框架設定" />
               <TabButton step={3} icon={(props) => <Icon name="Users" {...props} />} label="3. 課程計畫與配課" />
-              <TabButton step={4} icon={(props) => <Icon name="Play" {...props} />} label="4. 執行自動排課" />
+              <TabButton step={4} icon={(props) => <Icon name="CalendarDays" {...props} />} label="4. 預排指定時段" />
+              <TabButton step={5} icon={(props) => <Icon name="Play" {...props} />} label="5. 執行自動排課" />
             </div>
 
             {/* Content Area 主工作區 */}
@@ -2180,13 +2293,213 @@ ${teacherRule}
                 </div>
               )}
 
-              {/* ================= STEP 4: 自動排課與雙向檢視 ================= */}
+              {/* ================= STEP 4: 預排指定時段課程 ================= */}
               {activeTab === 4 && (
                 <div className="animate-fade-in flex flex-col h-full overflow-hidden">
                   <div className="flex flex-col md:flex-row justify-between items-start md:items-end border-b border-slate-200 pb-4 mb-6 gap-4 flex-shrink-0">
+                    <div className="text-left">
+                      <h2 className="text-2xl font-bold text-slate-800 flex items-center">
+                        <Icon name="CalendarDays" className="w-6 h-6 mr-2 text-blue-600" />
+                        階段四：預排指定時段課程
+                      </h2>
+                      <p className="text-xs md:text-sm text-slate-500 mt-1">
+                        有些學科或授課教師必須固定在特定時段（如週會、體育課等）。您可以在此處搜尋並手動將這些課程預先排入課表中。系統在下一步執行自動排課時，會避開這些位置並保留您的預排設定。 (此步驟為非必需，也可全由系統自動排課)
+                      </p>
+                    </div>
+                    <div className="flex gap-2">
+                      <button 
+                        onClick={() => {
+                          if (confirm("確定要清除所有已預排的課程嗎？這將重設整份課表。")) {
+                            initEmptySchedule(true);
+                          }
+                        }}
+                        className="px-4 py-2 bg-red-50 hover:bg-red-100 text-red-600 rounded-lg text-xs font-bold transition-all border border-red-100"
+                      >
+                        🗑️ 清除所有預排
+                      </button>
+                    </div>
+                  </div>
+
+                  <div className="flex-grow grid grid-cols-1 lg:grid-cols-12 gap-6 min-h-[500px] overflow-hidden">
+                    
+                    {/* 左側：搜尋待預排課程 */}
+                    <div className="lg:col-span-4 border border-slate-200 rounded-2xl p-4 bg-slate-50/50 flex flex-col overflow-hidden">
+                      <h3 className="font-extrabold text-sm text-slate-700 mb-3 flex items-center gap-1.5 text-left">
+                        <Icon name="BookOpen" className="w-4 h-4 text-blue-500" />
+                        1. 搜尋待預排課程
+                      </h3>
+                      
+                      <div className="relative mb-3 flex-shrink-0">
+                        <input
+                          type="text"
+                          placeholder="搜尋科目、教師、班級..."
+                          value={preScheduleSearch}
+                          onChange={(e) => setPreScheduleSearch(e.target.value)}
+                          className="w-full pl-3 pr-8 py-2 text-xs border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 text-slate-700 bg-white"
+                        />
+                        {preScheduleSearch && (
+                          <button 
+                            onClick={() => setPreScheduleSearch('')}
+                            className="absolute right-2.5 top-2.5 text-slate-400 hover:text-slate-600 text-xs font-bold"
+                          >
+                            &times;
+                          </button>
+                        )}
+                      </div>
+
+                      <div className="flex-grow overflow-y-auto custom-scrollbar space-y-2 pr-1">
+                        {filteredPreScheduleAssignments.length === 0 ? (
+                          <p className="text-xs text-slate-400 italic text-center py-8">無符合的待配課資料</p>
+                        ) : (
+                          filteredPreScheduleAssignments.map((assign) => {
+                            const preScheduledCount = getPreScheduledCount(assign);
+                            const remaining = assign.hours - preScheduledCount;
+                            return (
+                              <div key={assign.id} className="bg-white border border-slate-200 rounded-xl p-3 flex flex-col justify-between shadow-sm hover:border-blue-300 hover:shadow-md cursor-pointer transition-all active:scale-[0.98] text-left">
+                                <div className="flex justify-between items-start">
+                                  <span className="font-extrabold text-xs text-slate-800">{assign.grade} {assign.className}</span>
+                                  <span className="text-[10px] bg-slate-100 text-slate-600 px-2 py-0.5 rounded-full border font-bold">剩餘 {remaining} / {assign.hours} 節</span>
+                                </div>
+                                <div className="text-xs text-slate-600 mt-2">
+                                  科目：<span className="font-bold text-slate-800">{assign.subject}</span>
+                                </div>
+                                <div className="text-xs text-slate-600 mt-0.5">
+                                  任課教師：<span className="font-bold text-slate-800">{getTeacherLabel(assign.teacher)}</span>
+                                </div>
+                                <button
+                                  onClick={() => setManualPlacementTarget({
+                                    assignmentId: assign.id,
+                                    grade: assign.grade,
+                                    className: assign.className,
+                                    subject: assign.subject,
+                                    teacher: assign.teacher,
+                                    hours: remaining
+                                  })}
+                                  className="mt-3 w-full py-1.5 bg-blue-50 hover:bg-blue-100 text-blue-600 rounded-lg text-[10px] font-extrabold transition-all border border-blue-100 flex items-center justify-center gap-1"
+                                >
+                                  🎯 選擇時段預排
+                                </button>
+                              </div>
+                            );
+                          })
+                        )}
+                      </div>
+                    </div>
+
+                    {/* 右側：目前課表預覽與手動格子點擊 */}
+                    <div className="lg:col-span-8 border border-slate-200 rounded-2xl p-4 bg-white flex flex-col overflow-hidden">
+                      <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-3 mb-3 flex-shrink-0">
+                        <h3 className="font-extrabold text-sm text-slate-700 flex items-center gap-1.5 text-left">
+                          <Icon name="CalendarDays" className="w-4 h-4 text-emerald-500" />
+                          2. 班級課表預覽與預排
+                        </h3>
+                        
+                        <div className="flex gap-2 w-full md:w-auto">
+                          <select
+                            value={previewClassGrade}
+                            onChange={(e) => setPreviewClassGrade(e.target.value)}
+                            className="text-xs border border-slate-200 rounded-lg px-2.5 py-1.5 bg-white text-slate-700 focus:outline-none focus:ring-1 focus:ring-blue-500"
+                          >
+                            {grades.map(g => (
+                              <option key={g.name} value={g.name}>{g.name}</option>
+                            ))}
+                          </select>
+                          <select
+                            value={previewClassClassName}
+                            onChange={(e) => setPreviewClassClassName(e.target.value)}
+                            className="text-xs border border-slate-200 rounded-lg px-2.5 py-1.5 bg-white text-slate-700 focus:outline-none focus:ring-1 focus:ring-blue-500"
+                          >
+                            {(grades.find(g => g.name === previewClassGrade)?.classes || []).map(c => (
+                              <option key={c} value={c}>{c}</option>
+                            ))}
+                          </select>
+                        </div>
+                      </div>
+
+                      <div className="flex-grow overflow-auto border border-slate-100 rounded-xl custom-scrollbar">
+                        <table className="w-full text-xs text-center border-collapse">
+                          <thead>
+                            <tr className="bg-slate-100 text-slate-600 border-b border-slate-200">
+                              <th className="py-3 px-2 border-r font-bold w-20">節次</th>
+                              {Array.from({ length: timeConfig.days }).map((_, i) => (
+                                <th key={i} className="py-3 px-2 border-r last:border-0 font-bold">星期{['一', '二', '三', '四', '五', '六'][i]}</th>
+                              ))}
+                            </tr>
+                          </thead>
+                          <tbody>
+                            {(() => {
+                              const gradeName = previewClassGrade || (grades[0]?.name);
+                              const className = previewClassClassName || (grades[0]?.classes[0]);
+                              const matrix = schedule?.[gradeName]?.[className] || Array(timeConfig.days).fill(null).map(() => Array(timeConfig.periodsPerDay).fill(null));
+                              const gradeObj = grades.find(g => g.name === gradeName);
+                              
+                              return Array.from({ length: timeConfig.periodsPerDay }).map((_, pIndex) => {
+                                const isLunch = pIndex === 4 || (timeConfig.periodsPerDay > 7 && pIndex === 5 && timeConfig.periodsPerDay !== 8);
+                                return (
+                                  <React.Fragment key={pIndex}>
+                                    {isLunch && (
+                                      <tr><td colSpan={timeConfig.days + 1} className="bg-amber-50/30 text-amber-600 py-1 text-[10px] border-y border-amber-100 pointer-events-none font-bold">中午休息</td></tr>
+                                    )}
+                                    <tr className="border-b border-slate-100 last:border-0">
+                                      <td className="py-3 px-2 border-r bg-slate-50 text-slate-500 font-bold">第 {pIndex + 1} 節</td>
+                                      {Array.from({ length: timeConfig.days }).map((_, dIndex) => {
+                                        const cell = matrix[dIndex]?.[pIndex];
+                                        const isGradeOff = !!(gradeObj?.offTimes?.[`${dIndex}-${pIndex}`]);
+                                        
+                                        let cellContent = "-";
+                                        let cellStyle = "text-slate-300 italic hover:bg-slate-50";
+                                        
+                                        if (isGradeOff) {
+                                          cellContent = "❌ 不上課";
+                                          cellStyle = "bg-slate-100 text-slate-400 font-bold cursor-not-allowed";
+                                        } else if (cell) {
+                                          cellContent = `${cell.subject} (${getTeacherLabel(cell.teacher)})`;
+                                          cellStyle = cell.preScheduled 
+                                            ? "bg-emerald-50 text-emerald-800 border-2 border-emerald-300 font-black shadow-inner"
+                                            : "bg-slate-100 text-slate-700 border border-slate-200 font-semibold";
+                                        }
+                                        
+                                        return (
+                                          <td
+                                            key={dIndex}
+                                            onClick={() => {
+                                              if (isGradeOff) return;
+                                              setEditingCell({
+                                                type: 'class',
+                                                grade: gradeName,
+                                                className: className,
+                                                day: dIndex,
+                                                period: pIndex
+                                              });
+                                            }}
+                                            className={`py-3 px-2 border-r last:border-0 h-16 w-24 align-middle truncate max-w-[120px] cursor-pointer transition-all ${cellStyle}`}
+                                            title={cell && cell.preScheduled ? "📌 已預排課程" : ""}
+                                          >
+                                            {cell && cell.preScheduled && <span className="text-[10px] bg-emerald-600 text-white px-1 py-0.2 rounded mr-1">📌</span>}
+                                            {cellContent}
+                                          </td>
+                                        );
+                                      })}
+                                    </tr>
+                                  </React.Fragment>
+                                );
+                              });
+                            })()}
+                          </tbody>
+                        </table>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              )}
+
+              {/* ================= STEP 5: 自動排課與雙向檢視 ================= */}
+              {activeTab === 5 && (
+                <div className="animate-fade-in flex flex-col h-full overflow-hidden">
+                  <div className="flex flex-col md:flex-row justify-between items-start md:items-end border-b border-slate-200 pb-4 mb-6 gap-4 flex-shrink-0">
                     <div>
-                      <h2 className="text-2xl font-bold text-slate-800">階段四：自動排課中心</h2>
-                      <p className="text-sm text-slate-500 mt-1">根據配課關係、年級不上課時段與教師不可排課設定，由演算法自動避開衝突進行排課。</p>
+                      <h2 className="text-2xl font-bold text-slate-800">階段五：自動排課中心</h2>
+                      <p className="text-sm text-slate-500 mt-1">根據配課關係、手動預排設定、年級不上課時段與教師不可排課設定，由演算法自動避開衝突進行排課。</p>
                     </div>
                     <button onClick={runAIScheduling} disabled={assignments.length === 0 || isScheduling}
                       className={`px-6 py-3 rounded-xl font-bold text-white shadow-lg flex items-center transition-all transform hover:-translate-y-0.5 ${assignments.length === 0 ? 'bg-slate-300 cursor-not-allowed shadow-none transform-none' : isScheduling ? 'bg-blue-400' : 'bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-700 hover:to-indigo-700'}`}
