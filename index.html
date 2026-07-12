@@ -93,7 +93,10 @@
         Sparkles: <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M5 3v4M3 5h4M6 17v4m-2-2h4m5-16l2.286 6.857L21 12l-5.714 2.143L13 21l-2.286-6.857L5 12l5.714-2.143L13 3z" />,
         Download: <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" />,
         Printer: <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M17 17h2a2 2 0 002-2v-4a2 2 0 00-2-2H5a2 2 0 00-2 2v4a2 2 0 002 2h2m2 4h10a2 2 0 002-2v-4a2 2 0 00-2-2H9v4a2 2 0 00-2 2v4a2 2 0 002 2zm8-12V5a2 2 0 00-2-2H9a2 2 0 00-2 2v4h10z" />,
-        Edit: <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" />
+        Edit: <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" />,
+        ArrowRight: <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M14 5l7 7m0 0l-7 7m7-7H3" />,
+        FileText: <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />,
+        Briefcase: <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M21 13.255A23.931 23.931 0 0112 15c-3.183 0-6.22-.62-9-1.745M16 6V4a2 2 0 00-2-2h-4a2 2 0 00-2 2v2m4 6h.01M5 20h14a2 2 0 002-2V8a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z" />
       };
       return (
         <svg className={className} fill="none" viewBox="0 0 24 24" stroke="currentColor">
@@ -101,6 +104,8 @@
         </svg>
       );
     };
+
+    const escapeHtml = (str) => String(str).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
 
     const generateSequence = (count, style) => {
       const result = [];
@@ -177,6 +182,9 @@
       const [gradeOffTimesTarget, setGradeOffTimesTarget] = useState(null);
       const [manualPlacementTarget, setManualPlacementTarget] = useState(null);
       const [selectedPlacementSlot, setSelectedPlacementSlot] = useState(null);
+
+      // 步驟五手動微調模式：false = 可被自動排課覆蓋（預設）；true = 視為預排鎖定（📌）
+      const [manualEditAsPreScheduled, setManualEditAsPreScheduled] = useState(false);
 
       // 階段四：手動預排指定時段課程狀態
       const [preScheduleSearch, setPreScheduleSearch] = useState('');
@@ -273,7 +281,7 @@
             const classMatrix = schedule[gradeName][className];
             for (let day = 0; day < timeConfig.days; day++) {
               for (let period = 0; period < timeConfig.periodsPerDay; period++) {
-                const cell = classMatrix[day][period];
+                const cell = classMatrix[day]?.[period];
                 if (cell && teacherMap[cell.teacher]) {
                   teacherMap[cell.teacher][day][period] = {
                     subject: cell.subject,
@@ -340,6 +348,23 @@
         }
       }, [activeTab]);
 
+      // 時間框架變動時，將既有課表矩陣重建為新尺寸（保留仍在範圍內的課堂），避免尺寸不一致造成崩潰
+      useEffect(() => {
+        setSchedule(prev => {
+          if (!prev) return prev;
+          const next = {};
+          for (const gName in prev) {
+            next[gName] = {};
+            for (const cName in prev[gName]) {
+              next[gName][cName] = Array(timeConfig.days).fill(null).map((_, d) =>
+                Array(timeConfig.periodsPerDay).fill(null).map((_, p) => prev[gName][cName][d]?.[p] || null)
+              );
+            }
+          }
+          return next;
+        });
+      }, [timeConfig.days, timeConfig.periodsPerDay]);
+
       const unplacedLessons = useMemo(() => {
         if (!schedule) return [];
         
@@ -350,7 +375,7 @@
             const classMatrix = schedule[gradeName][className];
             for (let d = 0; d < timeConfig.days; d++) {
               for (let p = 0; p < timeConfig.periodsPerDay; p++) {
-                const cell = classMatrix[d][p];
+                const cell = classMatrix[d]?.[p];
                 if (cell) {
                   const key = `${gradeName}-${className}-${cell.subject}-${cell.teacher}`;
                   placedCounts[key] = (placedCounts[key] || 0) + 1;
@@ -427,7 +452,7 @@
             const classMatrix = schedule[gradeName][className];
             for (let d = 0; d < timeConfig.days; d++) {
               for (let p = 0; p < timeConfig.periodsPerDay; p++) {
-                if (classMatrix[d][p]) {
+                if (classMatrix[d]?.[p]) {
                   placed++;
                 }
               }
@@ -467,6 +492,9 @@
         setSchedule(newSchedule);
         setScheduleStats({ total: 0, placed: 0, conflicts: 0 });
       };
+
+      // 午休列統一插在第 4 節之後（第 5 節之前），避免多節制下出現重複午休列
+      const isLunchBreak = (pIndex) => pIndex === 4;
 
       const getTeacherLabel = (teacherName) => {
         const hr = homerooms[teacherName];
@@ -526,7 +554,38 @@
         setNewGradeInput('');
       };
       
-      const removeGrade = (index) => setGrades(prev => prev.filter((_, i) => i !== index));
+      const removeGrade = (index) => {
+        const grade = grades[index];
+        if (!grade) return;
+        setGrades(prev => prev.filter((_, i) => i !== index));
+        // 一併清除該年級的課程計畫、配課、導師職務、拆分設定與課表資料
+        setCoursePlans(prev => {
+          const next = { ...prev };
+          delete next[grade.name];
+          return next;
+        });
+        setAssignments(prev => prev.filter(a => a.grade !== grade.name));
+        setHomerooms(prev => {
+          const next = { ...prev };
+          Object.keys(next).forEach(t => {
+            if (next[t] && next[t].grade === grade.name) delete next[t];
+          });
+          return next;
+        });
+        setCustomSplits(prev => {
+          const next = { ...prev };
+          Object.keys(next).forEach(k => {
+            if (k.startsWith(`${grade.name}-`)) delete next[k];
+          });
+          return next;
+        });
+        setSchedule(prev => {
+          if (!prev || !prev[grade.name]) return prev;
+          const next = { ...prev };
+          delete next[grade.name];
+          return next;
+        });
+      };
 
       const toggleGradeOffTime = (gIndex, day, period) => {
         setGrades(prev => prev.map((g, i) => {
@@ -560,7 +619,32 @@
       };
       
       const removeClassFromGrade = (gIndex, cIndex) => {
+        const grade = grades[gIndex];
+        const className = grade?.classes[cIndex];
+        if (!grade || className === undefined) return;
         setGrades(prev => prev.map((g, i) => i === gIndex ? { ...g, classes: g.classes.filter((_, ci) => ci !== cIndex) } : g));
+        // 一併清除該班的配課、導師職務、拆分設定與課表資料
+        setAssignments(prev => prev.filter(a => !(a.grade === grade.name && a.className === className)));
+        setHomerooms(prev => {
+          const next = { ...prev };
+          Object.keys(next).forEach(t => {
+            if (next[t] && next[t].grade === grade.name && next[t].className === className) delete next[t];
+          });
+          return next;
+        });
+        setCustomSplits(prev => {
+          const next = { ...prev };
+          Object.keys(next).forEach(k => {
+            if (k.startsWith(`${grade.name}-${className}-`)) delete next[k];
+          });
+          return next;
+        });
+        setSchedule(prev => {
+          if (!prev || !prev[grade.name] || !prev[grade.name][className]) return prev;
+          const next = { ...prev, [grade.name]: { ...prev[grade.name] } };
+          delete next[grade.name][className];
+          return next;
+        });
       };
 
       const handleBatchCreateCoursePlan = (gradeName) => {
@@ -783,7 +867,7 @@ ${classSamples}
               for (let pIndex = 0; pIndex < timeConfig.periodsPerDay; pIndex++) {
                 const row = [grade.name, className, `第 ${pIndex + 1} 節`];
                 for (let dIndex = 0; dIndex < timeConfig.days; dIndex++) {
-                  const lesson = classSchedule[dIndex][pIndex];
+                  const lesson = classSchedule[dIndex]?.[pIndex];
                   if (lesson) {
                     row.push(`${lesson.subject} (${getTeacherLabel(lesson.teacher)})`);
                   } else {
@@ -803,7 +887,7 @@ ${classSamples}
             for (let pIndex = 0; pIndex < timeConfig.periodsPerDay; pIndex++) {
               const row = ["教師", getTeacherLabel(teacher), `第 ${pIndex + 1} 節`];
               for (let dIndex = 0; dIndex < timeConfig.days; dIndex++) {
-                const cell = teacherMatrix[dIndex][pIndex];
+                const cell = teacherMatrix[dIndex]?.[pIndex];
                 const isBusy = !!(teacherBusyTimes[teacher]?.[`${dIndex}-${pIndex}`]);
                 if (isBusy) {
                   row.push("❌ 不可排課");
@@ -905,14 +989,14 @@ ${classSamples}
             grade.classes.forEach((className) => {
               const classSchedule = schedule[grade.name]?.[className];
               if (!classSchedule) return;
-              html += `<div class="page-break"><h2>${grade.name} ${className} 班級課表</h2><div class="subtitle">出表時間: ${new Date().toLocaleDateString()}</div><table><thead><tr><th style="width: 75px;">節次 \\ 星期</th>${Array.from({length: timeConfig.days}).map((_, i) => `<th>星期${weekdays[i] || (i + 1)}</th>`).join('')}</tr></thead><tbody>`;
+              html += `<div class="page-break"><h2>${escapeHtml(grade.name)} ${escapeHtml(className)} 班級課表</h2><div class="subtitle">出表時間: ${new Date().toLocaleDateString()}</div><table><thead><tr><th style="width: 75px;">節次 \\ 星期</th>${Array.from({length: timeConfig.days}).map((_, i) => `<th>星期${weekdays[i] || (i + 1)}</th>`).join('')}</tr></thead><tbody>`;
               for (let pIndex = 0; pIndex < timeConfig.periodsPerDay; pIndex++) {
-                if (pIndex === 4 || (timeConfig.periodsPerDay > 7 && pIndex === 5 && timeConfig.periodsPerDay !== 8)) html += `<tr><td colspan="${timeConfig.days + 1}" class="rest-row">中午休息時間</td></tr>`;
+                if (isLunchBreak(pIndex)) html += `<tr><td colspan="${timeConfig.days + 1}" class="rest-row">中午休息時間</td></tr>`;
                 html += `<tr><td class="period-col">第 ${pIndex + 1} 節</td>`;
                 for (let dIndex = 0; dIndex < timeConfig.days; dIndex++) {
-                  const lesson = classSchedule[dIndex][pIndex];
+                  const lesson = classSchedule[dIndex]?.[pIndex];
                   if (grade.offTimes?.[`${dIndex}-${pIndex}`]) html += `<td class="grade-off"></td>`;
-                  else if (lesson) html += `<td class="has-lesson-class"><span class="subject">${lesson.subject}</span><span class="detail">${getTeacherLabel(lesson.teacher)}</span></td>`;
+                  else if (lesson) html += `<td class="has-lesson-class"><span class="subject">${escapeHtml(lesson.subject)}</span><span class="detail">${escapeHtml(getTeacherLabel(lesson.teacher))}</span></td>`;
                   else html += `<td>-</td>`;
                 }
                 html += `</tr>`;
@@ -924,14 +1008,14 @@ ${classSamples}
           teachers.forEach((teacher) => {
             const matrix = scheduleByTeacher[teacher];
             if (!matrix) return;
-            html += `<div class="page-break"><h2>${getTeacherLabel(teacher)} 教師個人課表</h2><div class="subtitle">每週授課: ${matrix.flat().filter(Boolean).length} 節 | 出表時間: ${new Date().toLocaleDateString()}</div><table><thead><tr><th style="width: 75px;">節次 \\ 星期</th>${Array.from({length: timeConfig.days}).map((_, i) => `<th>星期${weekdays[i] || (i + 1)}</th>`).join('')}</tr></thead><tbody>`;
+            html += `<div class="page-break"><h2>${escapeHtml(getTeacherLabel(teacher))} 教師個人課表</h2><div class="subtitle">每週授課: ${matrix.flat().filter(Boolean).length} 節 | 出表時間: ${new Date().toLocaleDateString()}</div><table><thead><tr><th style="width: 75px;">節次 \\ 星期</th>${Array.from({length: timeConfig.days}).map((_, i) => `<th>星期${weekdays[i] || (i + 1)}</th>`).join('')}</tr></thead><tbody>`;
             for (let pIndex = 0; pIndex < timeConfig.periodsPerDay; pIndex++) {
-              if (pIndex === 4 || (timeConfig.periodsPerDay > 7 && pIndex === 5 && timeConfig.periodsPerDay !== 8)) html += `<tr><td colspan="${timeConfig.days + 1}" class="rest-row">中午休息時間</td></tr>`;
+              if (isLunchBreak(pIndex)) html += `<tr><td colspan="${timeConfig.days + 1}" class="rest-row">中午休息時間</td></tr>`;
               html += `<tr><td class="period-col">第 ${pIndex + 1} 節</td>`;
               for (let dIndex = 0; dIndex < timeConfig.days; dIndex++) {
-                const cell = matrix[dIndex][pIndex];
+                const cell = matrix[dIndex]?.[pIndex];
                 if (teacherBusyTimes[teacher]?.[`${dIndex}-${pIndex}`]) html += `<td class="busy"></td>`;
-                else if (cell) html += `<td class="has-lesson-teacher"><span class="subject">${cell.subject}</span><span class="detail">${cell.grade}${cell.className}</span></td>`;
+                else if (cell) html += `<td class="has-lesson-teacher"><span class="subject">${escapeHtml(cell.subject)}</span><span class="detail">${escapeHtml(cell.grade)}${escapeHtml(cell.className)}</span></td>`;
                 else html += `<td>-</td>`;
               }
               html += `</tr>`;
@@ -942,6 +1026,10 @@ ${classSamples}
         html += `</body></html>`;
         const el = document.createElement('div');
         el.innerHTML = html;
+        // 移出可視範圍，避免生成 PDF 期間頁面底部閃現整份課表
+        el.style.position = 'fixed';
+        el.style.left = '-10000px';
+        el.style.top = '0';
         document.body.appendChild(el);
         html2pdf().from(el).set({
           margin: 10,
@@ -949,7 +1037,14 @@ ${classSamples}
           html2canvas: { scale: 2, logging: false },
           jsPDF: { unit: 'mm', format: 'a4', orientation: 'landscape' },
           pagebreak: { mode: ['css', 'legacy'] }
-        }).save().then(() => { document.body.removeChild(el); });
+        }).save().then(() => {
+          document.body.removeChild(el);
+          showToast("PDF 課表已成功下載！");
+        }).catch((err) => {
+          if (el.parentNode) document.body.removeChild(el);
+          console.error(err);
+          showToast("PDF 匯出失敗，請重試。", "error");
+        });
       };
 
       const handleDownloadDocx = (option) => {
@@ -1053,7 +1148,7 @@ ${classSamples}
               // Timetable Body Rows
               for (let pIndex = 0; pIndex < timeConfig.periodsPerDay; pIndex++) {
                 // Lunch Break
-                if (pIndex === 4 || (timeConfig.periodsPerDay > 7 && pIndex === 5 && timeConfig.periodsPerDay !== 8)) {
+                if (isLunchBreak(pIndex)) {
                   tableRows.push(new docxObj.TableRow({
                     children: [createCell("中午休息時間", { bold: true, color: "d97706", fill: "fffbeb", size: 20, columnSpan: timeConfig.days + 1 })],
                     height: { value: 400, rule: docxObj.HeightRule?.ATLEAST || "atLeast" }
@@ -1063,7 +1158,7 @@ ${classSamples}
                 // Standard Period Row
                 const cells = [createCell(`第 ${pIndex + 1} 節`, { bold: true, color: "475569", fill: "f8fafc", size: 20 })];
                 for (let dIndex = 0; dIndex < timeConfig.days; dIndex++) {
-                  const lesson = classSchedule[dIndex][pIndex];
+                  const lesson = classSchedule[dIndex]?.[pIndex];
                   const isGradeOff = !!(grade.offTimes?.[`${dIndex}-${pIndex}`]);
                   
                   if (isGradeOff) {
@@ -1128,7 +1223,7 @@ ${classSamples}
 
             // Body Rows
             for (let pIndex = 0; pIndex < timeConfig.periodsPerDay; pIndex++) {
-              if (pIndex === 4 || (timeConfig.periodsPerDay > 7 && pIndex === 5 && timeConfig.periodsPerDay !== 8)) {
+              if (isLunchBreak(pIndex)) {
                 tableRows.push(new docxObj.TableRow({
                   children: [createCell("中午休息時間", { bold: true, color: "d97706", fill: "fffbeb", size: 20, columnSpan: timeConfig.days + 1 })],
                   height: { value: 400, rule: docxObj.HeightRule?.ATLEAST || "atLeast" }
@@ -1137,7 +1232,7 @@ ${classSamples}
 
               const cells = [createCell(`第 ${pIndex + 1} 節`, { bold: true, color: "475569", fill: "f8fafc", size: 20 })];
               for (let dIndex = 0; dIndex < timeConfig.days; dIndex++) {
-                const cell = teacherMatrix[dIndex][pIndex];
+                const cell = teacherMatrix[dIndex]?.[pIndex];
                 const isBusy = !!(teacherBusyTimes[teacher]?.[`${dIndex}-${pIndex}`]);
                 if (isBusy) cells.push(createCell("", { fill: "fef2f2" }));
                 else if (cell) cells.push(createCell([
@@ -1150,22 +1245,22 @@ ${classSamples}
             }
 
             // Create Table
-            children.push(new docx.Table({
+            children.push(new docxObj.Table({
               rows: tableRows,
-              width: { size: 100, type: docx.WidthType?.PERCENTAGE || "pct" },
+              width: { size: 100, type: docxObj.WidthType?.PERCENTAGE || "pct" },
               borders: {
-                top: { style: docx.BorderStyle?.SINGLE || "single", size: 4, color: "cbd5e1" },
-                bottom: { style: docx.BorderStyle?.SINGLE || "single", size: 4, color: "cbd5e1" },
-                left: { style: docx.BorderStyle?.SINGLE || "single", size: 4, color: "cbd5e1" },
-                right: { style: docx.BorderStyle?.SINGLE || "single", size: 4, color: "cbd5e1" },
-                insideHorizontal: { style: docx.BorderStyle?.SINGLE || "single", size: 4, color: "cbd5e1" },
-                insideVertical: { style: docx.BorderStyle?.SINGLE || "single", size: 4, color: "cbd5e1" }
+                top: { style: docxObj.BorderStyle?.SINGLE || "single", size: 4, color: "cbd5e1" },
+                bottom: { style: docxObj.BorderStyle?.SINGLE || "single", size: 4, color: "cbd5e1" },
+                left: { style: docxObj.BorderStyle?.SINGLE || "single", size: 4, color: "cbd5e1" },
+                right: { style: docxObj.BorderStyle?.SINGLE || "single", size: 4, color: "cbd5e1" },
+                insideHorizontal: { style: docxObj.BorderStyle?.SINGLE || "single", size: 4, color: "cbd5e1" },
+                insideVertical: { style: docxObj.BorderStyle?.SINGLE || "single", size: 4, color: "cbd5e1" }
               }
             }));
           });
         }
 
-        const doc = new docx.Document({
+        const doc = new docxObj.Document({
           sections: [{
             properties: {
               page: {
@@ -1180,7 +1275,7 @@ ${classSamples}
 
         showToast("Word DOCX 正在排版並生成中，請稍候...", "success");
 
-        docx.Packer.toBlob(doc).then((blob) => {
+        docxObj.Packer.toBlob(doc).then((blob) => {
           const url = URL.createObjectURL(blob);
           const link = document.createElement("a");
           link.setAttribute("href", url);
@@ -1390,17 +1485,24 @@ ${classSamples}
         if (!csvInput.trim()) return;
         const lines = csvInput.trim().split('\n');
         const newAssignments = [];
+        const newTeacherNames = [];
         lines.forEach((line, index) => {
           if (line.startsWith('教師姓名,') || line.trim() === '') return;
           const parts = line.split(',');
           if (parts.length >= 5) {
+            const teacherName = parts[0].trim();
             newAssignments.push({
               id: Date.now() + index + Math.random(),
-              teacher: parts[0].trim(), grade: parts[1].trim(), className: parts[2].trim(), subject: parts[3].trim(), hours: parseInt(parts[4].trim(), 10) || 0,
+              teacher: teacherName, grade: parts[1].trim(), className: parts[2].trim(), subject: parts[3].trim(), hours: parseInt(parts[4].trim(), 10) || 0,
             });
-            if (!teachers.includes(parts[0].trim())) setTeachers(prev => [...prev, parts[0].trim()]);
+            if (!teachers.includes(teacherName) && !newTeacherNames.includes(teacherName)) {
+              newTeacherNames.push(teacherName);
+            }
           }
         });
+        if (newTeacherNames.length > 0) {
+          setTeachers(prev => [...prev, ...newTeacherNames.filter(n => !prev.includes(n))]);
+        }
         setAssignments(prev => [...prev, ...newAssignments]);
         setCsvInput('');
         showToast(`配課結果匯入完成，成功建立 ${newAssignments.length} 筆配課關係！`);
@@ -1537,7 +1639,13 @@ ${classSamples}
         }
 
         const nextSchedule = JSON.parse(JSON.stringify(schedule));
-        
+
+        // 排課後才新增的年級/班級可能不在 schedule 中，先補齊空矩陣避免崩潰
+        if (!nextSchedule[grade]) nextSchedule[grade] = {};
+        if (!nextSchedule[grade][className]) {
+          nextSchedule[grade][className] = Array(timeConfig.days).fill(null).map(() => Array(timeConfig.periodsPerDay).fill(null));
+        }
+
         if (bypassTeacherBusy) {
           setTeacherBusyTimes(prev => {
             const teacherMap = prev[teacher] || {};
@@ -1555,7 +1663,7 @@ ${classSamples}
         for (const g in nextSchedule) {
           for (const c in nextSchedule[g]) {
             if (g === grade && c === className) continue;
-            const cell = nextSchedule[g][c][day][period];
+            const cell = nextSchedule[g][c][day]?.[period];
             if (cell && cell.teacher === teacher) {
               conflictClass = `${g} ${c}`;
               break;
@@ -1602,10 +1710,11 @@ ${classSamples}
           return;
         }
 
-        nextSchedule[grade][className][day][period] = { 
-          subject, 
-          teacher, 
-          preScheduled: activeTab === 4 || (existing && existing.preScheduled) 
+        nextSchedule[grade][className][day][period] = {
+          subject,
+          teacher,
+          // 步驟四一律視為預排；步驟五依「手動微調模式」開關決定是否鎖定
+          preScheduled: activeTab === 4 || manualEditAsPreScheduled
         };
         setSchedule(nextSchedule);
         setSelectedPlacementSlot(null);
@@ -1656,7 +1765,7 @@ ${classSamples}
           for (const c in nextSchedule[g]) {
             if (type === 'class' && g === grade && c === className) continue;
             
-            const cell = nextSchedule[g][c][day][period];
+            const cell = nextSchedule[g][c][day]?.[period];
             if (cell && cell.teacher === assign.teacher) {
               conflictClass = `${g} ${c}`;
               break;
@@ -1690,7 +1799,7 @@ ${classSamples}
           nextSchedule[grade][className][day][period] = {
             subject: assign.subject,
             teacher: assign.teacher,
-            preScheduled: activeTab === 4 || (cellBefore && cellBefore.preScheduled)
+            preScheduled: activeTab === 4 || manualEditAsPreScheduled
           };
         } else if (type === 'teacher') {
           // 檢查手動排入的節數是否已滿
@@ -1713,7 +1822,7 @@ ${classSamples}
           nextSchedule[assign.grade][assign.className][day][period] = {
             subject: assign.subject,
             teacher: teacher,
-            preScheduled: activeTab === 4 || (cellBefore && cellBefore.preScheduled)
+            preScheduled: activeTab === 4 || manualEditAsPreScheduled
           };
         }
 
@@ -1743,6 +1852,71 @@ ${classSamples}
 ${teacherRule}
 
 請直接輸出純 CSV 內容：`;
+      };
+
+      // ================= 遺失函式補回：複製提示詞、批次產生班級、課程計畫 CRUD =================
+      const copyToClipboard = (text, setCopied) => {
+        navigator.clipboard.writeText(text).then(() => {
+          setCopied(true);
+          setTimeout(() => setCopied(false), 2000);
+        }).catch(() => showToast("複製失敗，請手動選取複製。", "error"));
+      };
+
+      const handleBatchCreateClasses = (gIndex) => {
+        const cfg = batchClassConfig[gIndex] || {};
+        const count = cfg.count || 3;
+        const style = cfg.style || '甲乙丙';
+        const suffix = cfg.suffix || '';
+        const names = generateSequence(count, style).map(n => `${n}${suffix}`);
+        let addedCount = 0;
+        setGrades(prev => prev.map((g, i) => {
+          if (i !== gIndex) return g;
+          const merged = [...g.classes];
+          names.forEach(n => {
+            if (!merged.includes(n)) {
+              merged.push(n);
+              addedCount++;
+            }
+          });
+          return { ...g, classes: merged };
+        }));
+        showToast(`已批次產生班級：${names.join('、')}`);
+      };
+
+      const addCoursePlan = (gradeName) => {
+        const input = newCourseInputs[gradeName] || {};
+        const subject = (input.subject || '').trim();
+        const hours = input.hours || 4;
+        if (!subject) return;
+        if ((coursePlans[gradeName] || []).some(p => p.subject === subject)) {
+          showToast(`科目「${subject}」已存在於 ${gradeName}！`, "error");
+          return;
+        }
+        setCoursePlans(prev => ({
+          ...prev,
+          [gradeName]: [...(prev[gradeName] || []), { id: Date.now() + Math.random(), subject, hours }]
+        }));
+        setNewCourseInputs(prev => ({ ...prev, [gradeName]: { subject: '', hours: 4 } }));
+        showToast(`已新增課程：${gradeName} ${subject} (每週 ${hours} 節)`);
+      };
+
+      const removeCoursePlan = (gradeName, courseId) => {
+        setCoursePlans(prev => ({
+          ...prev,
+          [gradeName]: (prev[gradeName] || []).filter(p => p.id !== courseId)
+        }));
+      };
+
+      const updateCoursePlanHours = (gradeName, courseId, hours) => {
+        if (hours <= 0) {
+          removeCoursePlan(gradeName, courseId);
+          showToast("節數設為 0，已自動刪除該科目。");
+          return;
+        }
+        setCoursePlans(prev => ({
+          ...prev,
+          [gradeName]: (prev[gradeName] || []).map(p => p.id === courseId ? { ...p, hours } : p)
+        }));
       };
 
       return (
@@ -1791,7 +1965,7 @@ ${teacherRule}
                     <p className="text-slate-500 mt-1">請新增年級，並利用「批次產生」或「手動加入」來建立所屬班級。</p>
                   </div>
                   <div className="bg-blue-50 p-4 rounded-xl border border-blue-100 flex items-center gap-2">
-                    <input type="text" placeholder="輸入新年級名稱 (例: 1年級)" className="flex-grow p-2.5 rounded-lg border border-blue-200 focus:outline-none focus:ring-2 focus:ring-blue-500 text-sm" value={newGradeInput} onChange={(e) => setNewGradeInput(e.target.value)} onKeyPress={(e) => e.key === 'Enter' && addGrade()} />
+                    <input type="text" placeholder="輸入新年級名稱 (例: 1年級)" className="flex-grow p-2.5 rounded-lg border border-blue-200 focus:outline-none focus:ring-2 focus:ring-blue-500 text-sm" value={newGradeInput} onChange={(e) => setNewGradeInput(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && addGrade()} />
                     <button onClick={addGrade} className="bg-blue-600 hover:bg-blue-700 text-white px-5 py-2.5 rounded-lg flex items-center text-sm font-bold transition-colors whitespace-nowrap"><Icon name="Plus" className="w-4 h-4 mr-1" /> 新增年級</button>
                   </div>
                   <div className="space-y-5">
@@ -1839,7 +2013,7 @@ ${teacherRule}
                           ))}
                         </div>
                         <div className="flex items-center gap-2 max-w-sm">
-                          <input type="text" placeholder="單筆手動新增 (例: 101)" className="flex-grow p-2 rounded-md border border-slate-300 text-sm focus:outline-none focus:border-blue-500" value={newClassInputs[gIndex] || ''} onChange={(e) => setNewClassInputs({...newClassInputs, [gIndex]: e.target.value})} onKeyPress={(e) => e.key === 'Enter' && addClassToGrade(gIndex)} />
+                          <input type="text" placeholder="單筆手動新增 (例: 101)" className="flex-grow p-2 rounded-md border border-slate-300 text-sm focus:outline-none focus:border-blue-500" value={newClassInputs[gIndex] || ''} onChange={(e) => setNewClassInputs({...newClassInputs, [gIndex]: e.target.value})} onKeyDown={(e) => e.key === 'Enter' && addClassToGrade(gIndex)} />
                           <button onClick={() => addClassToGrade(gIndex)} className="bg-slate-200 hover:bg-slate-300 text-slate-700 px-4 py-2 rounded-md text-sm font-bold transition-colors">單筆加入</button>
                         </div>
                       </div>
@@ -1941,7 +2115,7 @@ ${teacherRule}
                                   </h3>
                                   
                                   <div className="flex gap-2 mb-4">
-                                    <input type="text" placeholder="科目名稱" className="flex-grow p-2 border rounded-md text-sm focus:ring-1 focus:ring-blue-500 outline-none" value={newCourseInputs[grade.name]?.subject || ''} onChange={e => setNewCourseInputs(prev => ({...prev, [grade.name]: {...prev[grade.name], subject: e.target.value}}))} onKeyPress={e => e.key === 'Enter' && addCoursePlan(grade.name)} />
+                                    <input type="text" placeholder="科目名稱" className="flex-grow p-2 border rounded-md text-sm focus:ring-1 focus:ring-blue-500 outline-none" value={newCourseInputs[grade.name]?.subject || ''} onChange={e => setNewCourseInputs(prev => ({...prev, [grade.name]: {...prev[grade.name], subject: e.target.value}}))} onKeyDown={e => e.key === 'Enter' && addCoursePlan(grade.name)} />
                                     <div className="flex items-center border rounded-md bg-slate-50 overflow-hidden">
                                       <span className="px-2 text-xs text-slate-500">節數</span>
                                       <input type="number" min="1" max="10" className="w-12 p-2 text-sm text-center outline-none" value={newCourseInputs[grade.name]?.hours || 4} onChange={e => setNewCourseInputs(prev => ({...prev, [grade.name]: {...prev[grade.name], hours: parseInt(e.target.value)||0}}))} />
@@ -2013,7 +2187,7 @@ ${teacherRule}
                             <h3 className="font-bold text-slate-800 flex items-center text-base">全校任課教師卡片 <span className="ml-2 bg-slate-100 text-slate-600 px-2 py-0.5 rounded-full text-xs font-extrabold">{teachers.length} 位</span></h3>
                           </div>
                           <div className="flex gap-2">
-                            <input type="text" placeholder="手動新增教師姓名" className="p-2 rounded-lg border border-slate-300 text-sm focus:ring-2 focus:ring-blue-500 outline-none w-48" value={newTeacherInput} onChange={e => setNewTeacherInput(e.target.value)} onKeyPress={(e) => e.key === 'Enter' && addTeacher()} />
+                            <input type="text" placeholder="手動新增教師姓名" className="p-2 rounded-lg border border-slate-300 text-sm focus:ring-2 focus:ring-blue-500 outline-none w-48" value={newTeacherInput} onChange={e => setNewTeacherInput(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && addTeacher()} />
                             <button onClick={addTeacher} className="bg-slate-700 hover:bg-slate-800 text-white px-4 py-2 rounded-lg text-sm font-bold">加入</button>
                           </div>
                         </div>
@@ -2083,8 +2257,32 @@ ${teacherRule}
 
                   {/* === 3.3 手動拖曳配課 === */}
                   {step3Tab === 'drag' && (
-                    <div className="flex flex-col md:flex-row gap-6 h-full flex-grow overflow-hidden">
-                      
+                    <div className="flex flex-col h-full flex-grow overflow-hidden gap-4">
+
+                      {/* AI 配課提示詞與 CSV 批次匯入 */}
+                      <div className="flex flex-col lg:flex-row gap-4 flex-shrink-0 bg-blue-50/50 p-4 rounded-xl border border-blue-100">
+                        <div className="flex-1 space-y-2">
+                          <div className="flex justify-between items-center">
+                            <h3 className="font-bold text-blue-900 flex items-center text-sm"><Icon name="Sparkles" className="w-4 h-4 mr-1 text-blue-600"/>配課提示詞助理</h3>
+                            <button onClick={() => copyToClipboard(generateAssignAIPrompt(), setCopiedAssignPrompt)} className="text-xs bg-blue-600 hover:bg-blue-700 text-white px-3 py-1.5 rounded flex items-center font-bold shadow-sm">
+                              {copiedAssignPrompt ? <Icon name="Check" className="w-3 h-3 mr-1" /> : <Icon name="Copy" className="w-3 h-3 mr-1" />} {copiedAssignPrompt ? '已複製' : '複製'}
+                            </button>
+                          </div>
+                          <div className="p-2 bg-white rounded border border-blue-200 text-xs font-mono h-20 overflow-y-auto text-slate-600 shadow-inner leading-relaxed">
+                            {generateAssignAIPrompt()}
+                          </div>
+                        </div>
+                        <div className="flex-1 space-y-2">
+                          <h3 className="font-bold text-blue-900 flex items-center text-sm">貼上 CSV 批次匯入配課結果</h3>
+                          <textarea className="w-full h-20 p-2 border border-blue-200 rounded text-xs font-mono outline-none focus:ring-1 focus:ring-blue-500" placeholder="教師姓名,任教年級,任教班級,任教科目,每週節數&#10;李大同,1年級,甲班,國語文,6" value={csvInput} onChange={(e) => setCsvInput(e.target.value)} />
+                          <div className="flex justify-end">
+                            <button onClick={handleImportCSV} disabled={!csvInput.trim()} className="text-xs bg-emerald-600 hover:bg-emerald-700 disabled:bg-slate-300 text-white px-4 py-1.5 rounded font-bold flex items-center"><Icon name="Upload" className="w-3 h-3 mr-1" /> 批次匯入</button>
+                          </div>
+                        </div>
+                      </div>
+
+                      <div className="flex flex-col md:flex-row gap-6 flex-grow overflow-hidden">
+
                       {/* 左側：待分配課程 */}
                       <div className="w-full md:w-1/3 flex flex-col bg-slate-50 rounded-xl border border-slate-200 shadow-inner overflow-hidden">
                         <div className="bg-slate-200 px-4 py-3 border-b border-slate-300 flex-shrink-0">
@@ -2286,6 +2484,7 @@ ${teacherRule}
                           )}
                         </div>
                       </div>
+                      </div>
                     </div>
                   )}
 
@@ -2434,7 +2633,7 @@ ${teacherRule}
                               const gradeObj = grades.find(g => g.name === gradeName);
                               
                               return Array.from({ length: timeConfig.periodsPerDay }).map((_, pIndex) => {
-                                const isLunch = pIndex === 4 || (timeConfig.periodsPerDay > 7 && pIndex === 5 && timeConfig.periodsPerDay !== 8);
+                                const isLunch = isLunchBreak(pIndex);
                                 return (
                                   <React.Fragment key={pIndex}>
                                     {isLunch && (
@@ -2652,9 +2851,22 @@ ${teacherRule}
                         </div>
                       </div>
 
-                      <div className="bg-blue-50/60 p-3 rounded-xl text-blue-800 text-xs flex items-center border border-blue-100 mb-4 flex-shrink-0">
-                        <Icon name="Info" className="w-5 h-5 mr-2 flex-shrink-0" />
-                        <span>💡 排好課囉！您可以<b>直接點擊功課表內任何一格</b>，手動更換、指派或清空課程，系統會自動核對教師同節衝堂！</span>
+                      <div className="bg-blue-50/60 p-3 rounded-xl text-blue-800 text-xs flex flex-col md:flex-row md:items-center md:justify-between gap-2 border border-blue-100 mb-4 flex-shrink-0">
+                        <div className="flex items-center">
+                          <Icon name="Info" className="w-5 h-5 mr-2 flex-shrink-0" />
+                          <span>💡 排好課囉！您可以<b>直接點擊功課表內任何一格</b>，手動更換、指派或清空課程，系統會自動核對教師同節衝堂！</span>
+                        </div>
+                        <button
+                          onClick={() => setManualEditAsPreScheduled(v => !v)}
+                          className={`flex-shrink-0 px-3 py-1.5 rounded-lg text-xs font-extrabold border transition-all shadow-sm whitespace-nowrap ${
+                            manualEditAsPreScheduled
+                              ? 'bg-emerald-600 text-white border-emerald-700 hover:bg-emerald-700'
+                              : 'bg-white text-slate-600 border-slate-300 hover:bg-slate-50'
+                          }`}
+                          title="切換此頁手動微調的保留方式：鎖定模式下微調的課會標記 📌，重跑自動排課時保留原位；覆蓋模式下則會被自動排課重新安排。"
+                        >
+                          {manualEditAsPreScheduled ? '📌 微調視為預排（重排時保留）' : '✏️ 微調可被自動排課覆蓋'}
+                        </button>
                       </div>
 
                       {/* --- 按班級呈現課表視角 --- */}
@@ -2680,13 +2892,13 @@ ${teacherRule}
                                       <tbody>
                                         {Array.from({ length: timeConfig.periodsPerDay }).map((_, pIndex) => (
                                           <React.Fragment key={pIndex}>
-                                            {(pIndex === 4 || (timeConfig.periodsPerDay > 7 && pIndex === 5 && timeConfig.periodsPerDay !== 8)) && (
+                                            {(isLunchBreak(pIndex)) && (
                                               <tr><td colSpan={timeConfig.days + 1} className="bg-amber-50/50 text-amber-600 py-1.5 text-xs border-y border-amber-100 font-bold tracking-[0.2em] pointer-events-none">中午休息時間</td></tr>
                                             )}
                                             <tr className="border-b border-slate-100 last:border-0">
                                               <td className="py-3 px-2 border-r border-slate-200 bg-slate-50 font-bold text-slate-500 shadow-sm pointer-events-none">第 {pIndex + 1} 節</td>
                                               {Array.from({ length: timeConfig.days }).map((_, dIndex) => {
-                                                const lesson = classSchedule[dIndex][pIndex];
+                                                const lesson = classSchedule[dIndex]?.[pIndex];
                                                 const isGradeOff = !!(grade?.offTimes?.[`${dIndex}-${pIndex}`]);
                                                 
                                                 return (
@@ -2756,13 +2968,13 @@ ${teacherRule}
                                     <tbody>
                                       {Array.from({ length: timeConfig.periodsPerDay }).map((_, pIndex) => (
                                         <React.Fragment key={pIndex}>
-                                          {(pIndex === 4 || (timeConfig.periodsPerDay > 7 && pIndex === 5 && timeConfig.periodsPerDay !== 8)) && (
+                                          {(isLunchBreak(pIndex)) && (
                                             <tr><td colSpan={timeConfig.days + 1} className="bg-amber-50/50 text-amber-600 py-1.5 text-xs border-y border-amber-100 font-bold tracking-[0.2em] pointer-events-none">中午休息時間</td></tr>
                                           )}
                                           <tr className="border-b border-slate-100 last:border-0">
                                             <td className="py-3 px-2 border-r border-slate-200 bg-slate-50 font-bold text-slate-500 shadow-sm pointer-events-none">第 {pIndex + 1} 節</td>
                                             {Array.from({ length: timeConfig.days }).map((_, dIndex) => {
-                                              const cell = teacherMatrix[dIndex][pIndex];
+                                              const cell = teacherMatrix[dIndex]?.[pIndex];
                                               const isBusy = !!(teacherBusyTimes[teacher]?.[`${dIndex}-${pIndex}`]);
 
                                               return (
@@ -3020,7 +3232,7 @@ ${teacherRule}
                       </span>
                       <button 
                         onClick={() => setPreviewTimetable(null)}
-                        className="text-xs text-slate-505 hover:text-slate-700 border px-2 py-0.5 rounded shadow-sm bg-white"
+                        className="text-xs text-slate-500 hover:text-slate-700 border px-2 py-0.5 rounded shadow-sm bg-white"
                       >
                         關閉對照
                       </button>
@@ -3046,7 +3258,7 @@ ${teacherRule}
                             }
                             
                             return Array.from({ length: timeConfig.periodsPerDay }).map((_, pIndex) => {
-                              const isLunch = pIndex === 4 || (timeConfig.periodsPerDay > 7 && pIndex === 5 && timeConfig.periodsPerDay !== 8);
+                              const isLunch = isLunchBreak(pIndex);
                               return (
                                 <React.Fragment key={pIndex}>
                                   {isLunch && (
@@ -3358,7 +3570,7 @@ ${teacherRule}
                           </thead>
                           <tbody>
                             {Array.from({ length: timeConfig.periodsPerDay }).map((_, pIndex) => {
-                              const isLunch = pIndex === 4 || (timeConfig.periodsPerDay > 7 && pIndex === 5 && timeConfig.periodsPerDay !== 8);
+                              const isLunch = isLunchBreak(pIndex);
                               return (
                                 <React.Fragment key={pIndex}>
                                   {isLunch && (
@@ -3431,7 +3643,7 @@ ${teacherRule}
                           </thead>
                           <tbody>
                             {Array.from({ length: timeConfig.periodsPerDay }).map((_, pIndex) => {
-                              const isLunch = pIndex === 4 || (timeConfig.periodsPerDay > 7 && pIndex === 5 && timeConfig.periodsPerDay !== 8);
+                              const isLunch = isLunchBreak(pIndex);
                               return (
                                 <React.Fragment key={pIndex}>
                                   {isLunch && (
@@ -3533,7 +3745,7 @@ ${teacherRule}
                                 const nextSchedule = JSON.parse(JSON.stringify(schedule));
                                 for (const g in nextSchedule) {
                                   for (const c in nextSchedule[g]) {
-                                    const cell = nextSchedule[g][c][day][period];
+                                    const cell = nextSchedule[g][c][day]?.[period];
                                     if (cell && cell.teacher === manualPlacementTarget.teacher) {
                                       nextSchedule[g][c][day][period] = null;
                                     }
