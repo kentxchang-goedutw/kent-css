@@ -1026,15 +1026,13 @@ ${classSamples}
         html += `</body></html>`;
         const el = document.createElement('div');
         el.innerHTML = html;
-        // 移出可視範圍，避免生成 PDF 期間頁面底部閃現整份課表
-        el.style.position = 'fixed';
-        el.style.left = '-10000px';
-        el.style.top = '0';
+        // 注意：不可用定位/透明度隱藏此元素，html2canvas 會因此擷取成空白 PDF；
+        // 直接附加在頁面底部（生成期間短暫可見屬正常現象）
         document.body.appendChild(el);
         html2pdf().from(el).set({
           margin: 10,
           filename: `${option === 'class' ? '班級課表' : '教師課表'}_${new Date().toLocaleDateString().replace(/\//g, '')}.pdf`,
-          html2canvas: { scale: 2, logging: false },
+          html2canvas: { scale: 2, logging: false, scrollX: 0, scrollY: 0 },
           jsPDF: { unit: 'mm', format: 'a4', orientation: 'landscape' },
           pagebreak: { mode: ['css', 'legacy'] }
         }).save().then(() => {
