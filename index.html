@@ -133,6 +133,7 @@
       // 階段一：年級與班級
       const [grades, setGrades] = useState([]);
       const [newGradeInput, setNewGradeInput] = useState('');
+      const [batchGradeInput, setBatchGradeInput] = useState('');
       const [newClassInputs, setNewClassInputs] = useState({});
       const [batchClassConfig, setBatchClassConfig] = useState({});
 
@@ -549,9 +550,27 @@
 
       const addGrade = () => {
         const name = newGradeInput.trim();
-        if (!name || grades.some(g => g.name === name)) return; 
+        if (!name || grades.some(g => g.name === name)) return;
         setGrades(prev => [...prev, { name, classes: [], offTimes: {} }]);
         setNewGradeInput('');
+      };
+
+      const handleBatchAddGrades = () => {
+        const names = [...new Set(batchGradeInput.split('\n').map(s => s.trim()).filter(Boolean))];
+        if (names.length === 0) return;
+        const existingNames = grades.map(g => g.name);
+        const toAdd = names.filter(n => !existingNames.includes(n));
+        if (toAdd.length === 0) {
+          showToast("沒有可新增的年級（輸入的年級皆已存在）。", "error");
+          return;
+        }
+        setGrades(prev => [
+          ...prev,
+          ...toAdd.filter(n => !prev.some(g => g.name === n)).map(name => ({ name, classes: [], offTimes: {} }))
+        ]);
+        setBatchGradeInput('');
+        const skipped = names.length - toAdd.length;
+        showToast(`批次新增完成，共加入 ${toAdd.length} 個年級！${skipped > 0 ? `（${skipped} 個已存在，自動略過）` : ''}`);
       };
       
       const removeGrade = (index) => {
@@ -1962,9 +1981,27 @@ ${teacherRule}
                     <h2 className="text-2xl font-bold text-slate-800">階段一：建立全校年級與班級</h2>
                     <p className="text-slate-500 mt-1">請新增年級，並利用「批次產生」或「手動加入」來建立所屬班級。</p>
                   </div>
-                  <div className="bg-blue-50 p-4 rounded-xl border border-blue-100 flex items-center gap-2">
-                    <input type="text" placeholder="輸入新年級名稱 (例: 1年級)" className="flex-grow p-2.5 rounded-lg border border-blue-200 focus:outline-none focus:ring-2 focus:ring-blue-500 text-sm" value={newGradeInput} onChange={(e) => setNewGradeInput(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && addGrade()} />
-                    <button onClick={addGrade} className="bg-blue-600 hover:bg-blue-700 text-white px-5 py-2.5 rounded-lg flex items-center text-sm font-bold transition-colors whitespace-nowrap"><Icon name="Plus" className="w-4 h-4 mr-1" /> 新增年級</button>
+                  <div className="bg-blue-50 p-4 rounded-xl border border-blue-100 space-y-3">
+                    <div className="flex items-center gap-2">
+                      <input type="text" placeholder="輸入新年級名稱 (例: 1年級)" className="flex-grow p-2.5 rounded-lg border border-blue-200 focus:outline-none focus:ring-2 focus:ring-blue-500 text-sm" value={newGradeInput} onChange={(e) => setNewGradeInput(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && addGrade()} />
+                      <button onClick={addGrade} className="bg-blue-600 hover:bg-blue-700 text-white px-5 py-2.5 rounded-lg flex items-center text-sm font-bold transition-colors whitespace-nowrap"><Icon name="Plus" className="w-4 h-4 mr-1" /> 新增年級</button>
+                    </div>
+                    <div className="flex items-start gap-2 pt-3 border-t border-blue-100">
+                      <textarea
+                        rows={3}
+                        placeholder={"批次新增：一行一個年級，例如\n1年級\n2年級\n3年級"}
+                        className="flex-grow p-2.5 rounded-lg border border-blue-200 focus:outline-none focus:ring-2 focus:ring-blue-500 text-sm font-mono resize-y"
+                        value={batchGradeInput}
+                        onChange={(e) => setBatchGradeInput(e.target.value)}
+                      />
+                      <button
+                        onClick={handleBatchAddGrades}
+                        disabled={!batchGradeInput.trim()}
+                        className="bg-emerald-600 hover:bg-emerald-700 disabled:bg-slate-300 disabled:cursor-not-allowed text-white px-5 py-2.5 rounded-lg flex items-center text-sm font-bold transition-colors whitespace-nowrap self-start"
+                      >
+                        <Icon name="Upload" className="w-4 h-4 mr-1" /> 批次新增年級
+                      </button>
+                    </div>
                   </div>
                   <div className="space-y-5">
                     {grades.length === 0 && (
